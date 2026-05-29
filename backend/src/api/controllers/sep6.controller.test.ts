@@ -97,6 +97,175 @@ describe('SEP-6 Controller', () => {
         })
       );
     });
+
+    it('returns fee_amount in the response', async () => {
+      (prisma.transaction.create as jest.Mock).mockResolvedValue({ id: 'tx_fee_d' });
+
+      const req = {
+        query: { asset_code: 'USDC', amount: '200' },
+        user: { publicKey: 'GTEST' },
+      } as any;
+
+      await sep6Deposit(req, mockResponse as Response);
+
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({ fee_amount: expect.any(String) })
+      );
+    });
+
+    it('stores feeAmount, feeAssetCode, and feeType on the transaction', async () => {
+      (prisma.transaction.create as jest.Mock).mockResolvedValue({ id: 'tx_fstore_d' });
+
+      const req = {
+        query: { asset_code: 'USDC', amount: '50' },
+        user: { publicKey: 'GTEST' },
+      } as any;
+
+      await sep6Deposit(req, mockResponse as Response);
+
+      expect(prisma.transaction.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            feeAmount: expect.any(String),
+            feeAssetCode: 'USDC',
+            feeType: 'FLAT',
+          }),
+        })
+      );
+    });
+
+    it('stores senderInfo with email, first_name, and last_name', async () => {
+      (prisma.transaction.create as jest.Mock).mockResolvedValue({ id: 'tx_si' });
+
+      const req = {
+        query: {
+          asset_code: 'USDC',
+          amount: '25',
+          email_address: 'alice@example.com',
+          first_name: 'Alice',
+          last_name: 'Smith',
+        },
+        user: { publicKey: 'GTEST' },
+      } as any;
+
+      await sep6Deposit(req, mockResponse as Response);
+
+      expect(prisma.transaction.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            senderInfo: expect.objectContaining({
+              email_address: 'alice@example.com',
+              first_name: 'Alice',
+              last_name: 'Smith',
+            }),
+          }),
+        })
+      );
+    });
+
+    it('stores callbackUrl when callback_url is provided', async () => {
+      (prisma.transaction.create as jest.Mock).mockResolvedValue({ id: 'tx_cb_d' });
+
+      const req = {
+        query: {
+          asset_code: 'USDC',
+          amount: '10',
+          callback_url: 'https://my.app/deposit-callback',
+        },
+        user: { publicKey: 'GTEST' },
+      } as any;
+
+      await sep6Deposit(req, mockResponse as Response);
+
+      expect(prisma.transaction.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ callbackUrl: 'https://my.app/deposit-callback' }),
+        })
+      );
+    });
+
+    it('stores memo and memo_type in senderInfo when provided', async () => {
+      (prisma.transaction.create as jest.Mock).mockResolvedValue({ id: 'tx_memo_d' });
+
+      const req = {
+        query: { asset_code: 'USDC', amount: '10', memo: 'order-42', memo_type: 'text' },
+        user: { publicKey: 'GTEST' },
+      } as any;
+
+      await sep6Deposit(req, mockResponse as Response);
+
+      expect(prisma.transaction.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            senderInfo: expect.objectContaining({ memo: 'order-42', memo_type: 'text' }),
+          }),
+        })
+      );
+    });
+
+    it('uses the caller-supplied memo in the response extra_info', async () => {
+      (prisma.transaction.create as jest.Mock).mockResolvedValue({ id: 'tx_memo_resp' });
+
+      const req = {
+        query: { asset_code: 'USDC', amount: '10', memo: 'custom-memo', memo_type: 'text' },
+        user: { publicKey: 'GTEST' },
+      } as any;
+
+      await sep6Deposit(req, mockResponse as Response);
+
+      expect(jsonMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          extra_info: expect.objectContaining({ memo: 'custom-memo' }),
+        })
+      );
+    });
+
+    it('returns 400 when amount is NaN', async () => {
+      const req = {
+        query: { asset_code: 'USDC', amount: 'abc' },
+        user: { publicKey: 'GTEST' },
+      } as any;
+
+      await sep6Deposit(req, mockResponse as Response);
+
+      expect(statusMock).toHaveBeenCalledWith(400);
+    });
+
+    it('returns 400 when amount is below minimum', async () => {
+      const req = {
+        query: { asset_code: 'USDC', amount: '0.001' },
+        user: { publicKey: 'GTEST' },
+      } as any;
+
+      await sep6Deposit(req, mockResponse as Response);
+
+      expect(statusMock).toHaveBeenCalledWith(400);
+    });
+
+    it('returns 400 when amount exceeds maximum', async () => {
+      const req = {
+        query: { asset_code: 'USDC', amount: '9999999' },
+        user: { publicKey: 'GTEST' },
+      } as any;
+
+      await sep6Deposit(req, mockResponse as Response);
+
+      expect(statusMock).toHaveBeenCalledWith(400);
+    });
+
+    it('returns 500 when the database throws', async () => {
+      (prisma.transaction.create as jest.Mock).mockRejectedValue(new Error('DB unavailable'));
+
+      const req = {
+        query: { asset_code: 'USDC', amount: '10' },
+        user: { publicKey: 'GTEST' },
+      } as any;
+
+      await sep6Deposit(req, mockResponse as Response);
+
+      expect(statusMock).toHaveBeenCalledWith(500);
+      expect(jsonMock).toHaveBeenCalledWith({ error: 'Failed to initiate deposit.' });
+    });
   });
 
   describe('sep6Withdraw', () => {

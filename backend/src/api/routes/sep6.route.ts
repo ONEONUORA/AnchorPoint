@@ -14,11 +14,19 @@ const router = Router();
 
 const depositQuerySchema = z.object({
   asset_code: z.string().min(1, 'asset_code is required'),
+  /** Stellar account that should receive the deposited funds (optional per SEP-6). */
   account: z.string().optional(),
   amount: z.string().optional(),
   email_address: z.string().email().optional(),
   first_name: z.string().optional(),
   last_name: z.string().optional(),
+  /** Memo value the sender should attach to their Stellar payment. */
+  memo: z.string().optional(),
+  /** Memo type: text (default), id, or hash. */
+  memo_type: z.enum(['text', 'id', 'hash']).optional(),
+  /** URL the anchor should POST status updates to (SEP-6 §4.1). */
+  callback_url: z.string().url().optional(),
+  lang: z.string().optional(),
 });
 
 const withdrawQuerySchema = z.object({
