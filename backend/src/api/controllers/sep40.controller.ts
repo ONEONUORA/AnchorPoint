@@ -20,6 +20,7 @@ interface SwapRate {
 
 interface SwapRateResponse {
   rates: SwapRate[];
+  errors?: { pair: string; reason: string }[];
 }
 
 /**
@@ -60,6 +61,11 @@ const MOCK_SWAP_RATES: Record<string, Record<string, number>> = {
 };
 
 class Sep40Controller {
+  // Simple in-memory cache for swap rates (5 minute TTL)
+  private readonly CACHE_TTL_MS = 5 * 60 * 1000;
+  private readonly swapRateCache = new Map<string, { rate: SwapRate; timestamp: number }>();
+
+  /**
   /**
    * Get swap rates for specified asset pairs
    * @param pairs Array of asset pairs to get rates for
@@ -67,15 +73,40 @@ class Sep40Controller {
    */
   async getSwapRates(pairs: AssetPair[]): Promise<SwapRateResponse> {
     const rates: SwapRate[] = [];
+    const errors: { pair: string; reason: string }[] = [];
 
     for (const pair of pairs) {
-      const rate = await this.getSwapRate(pair.sell_asset, pair.buy_asset);
-      if (rate) {
-        rates.push(rate);
+      try {
+        // Validate pair structure
+        if (!pair.sell_asset || !pair.buy_asset) {
+          errors.push({
+            pair: `${pair.sell_asset || 'null'}/${pair.buy_asset || 'null'}`,
+            reason: 'Missing sell_asset or buy_asset property'
+          });
+          continue;
+        }
+
+        const rate = await this.getSwapRate(pair.sell_asset, pair.buy_asset);
+        if (rate) {
+          rates.push(rate);
+        } else {
+          errors.push({
+            pair: `${pair.sell_asset}/${pair.buy_asset}`,
+            reason: 'Unsupported asset pair or invalid rate calculation'
+          });
+        }
+      } catch (error) {
+        errors.push({
+          pair: `${pair.sell_asset}/${pair.buy_asset}`,
+          reason: error instanceof Error ? error.message : 'Unknown error occurred'
+        });
       }
     }
 
-    return { rates };
+    return { 
+      rates, 
+      errors: errors.length > 0 ? errors : undefined 
+    };
   }
 
   /**
@@ -84,9 +115,40 @@ class Sep40Controller {
    * @param buyAsset Asset code to buy
    * @returns Swap rate or null if not available
    */
+  private normalizeAssetCode(assetCode: string): string | null {
+    if (!assetCode || typeof assetCode !== 'string') {
+      return null;
+    }
+    
+    // Trim whitespace and convert to uppercase
+    let normalized = assetCode.trim().toUpperCase();
+    
+    // Remove any non-alphanumeric characters (except underscores)
+    normalized = normalized.replace(/[^A-Z0-9_]/g, '');
+    
+    // Validate that it's not empty after cleaning
+    if (!normalized) {
+      return null;
+    }
+    
+    return normalized;
+  }
+
   private async getSwapRate(sellAsset: string, buyAsset: string): Promise<SwapRate | null> {
-    const sellCode = sellAsset.toUpperCase();
-    const buyCode = buyAsset.toUpperCase();
+    const sellCode = this.normalizeAssetCode(sellAsset);
+    const buyCode = this.normalizeAssetCode(buyAsset);
+    
+    if (!sellCode || !buyCode) {
+      return null;
+    }
+    
+    const cacheKey = `${sellCode}/${buyCode}`;
+
+    // Check cache first
+    const cached = this.swapRateCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL_MS) {
+      return cached.rate;
+    }
 
     // Validate asset codes
     if (!sellCode || !buyCode || sellCode === buyCode) {
@@ -106,12 +168,33 @@ class Sep40Controller {
       }
     }
 
-    return {
+    // Calculate appropriate decimal precision based on rate magnitude
+    let decimals = 7;
+    if (rate < 0.001) {
+      decimals = 10;
+    } else if (rate < 0.01) {
+      decimals = 9;
+    } else if (rate < 0.1) {
+      decimals = 8;
+    } else if (rate >= 1000) {
+      decimals = 2;
+    } else if (rate >= 100) {
+      decimals = 3;
+    } else if (rate >= 10) {
+      decimals = 4;
+    }
+    
+    const rateObj = {
       sell_asset: sellCode,
       buy_asset: buyCode,
-      rate: parseFloat(rate.toFixed(7)),
-      decimals: 7,
+      rate: parseFloat(rate.toFixed(decimals)),
+      decimals,
     };
+
+    // Store in cache
+    this.swapRateCache.set(cacheKey, { rate: rateObj, timestamp: Date.now() });
+
+    return rateObj;
   }
 
   /**
@@ -149,6 +232,12 @@ class Sep40Controller {
     }
 
     MOCK_SWAP_RATES[sellCode][buyCode] = rate;
+    
+    // Invalidate cache for this pair and its inverse
+    const cacheKey = `${sellCode}/${buyCode}`;
+    const inverseCacheKey = `${buyCode}/${sellCode}`;
+    this.swapRateCache.delete(cacheKey);
+    this.swapRateCache.delete(inverseCacheKey);
   }
 }
 
