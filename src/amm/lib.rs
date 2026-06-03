@@ -5,12 +5,14 @@ use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, E
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
+    Admin,
     TokenA,
     TokenB,
     ReserveA,
     ReserveB,
     TotalShares,
     Shares(Address),
+    Paused,
 }
 
 #[contract]
@@ -19,10 +21,13 @@ pub struct AMM;
 #[contractimpl]
 impl AMM {
     /// Initializes the AMM pool for a specific pair of tokens.
-    pub fn initialize(env: Env, token_a: Address, token_b: Address) {
+    pub fn initialize(env: Env, admin: Address, token_a: Address, token_b: Address) {
         if env.storage().instance().has(&DataKey::TokenA) {
             panic!("already initialized");
         }
+
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &admin);
 
         // Canonical order: ensures same pool for (A,B) and (B,A)
         if token_a < token_b {
@@ -36,11 +41,33 @@ impl AMM {
         env.storage().instance().set(&DataKey::ReserveA, &0_i128);
         env.storage().instance().set(&DataKey::ReserveB, &0_i128);
         env.storage().instance().set(&DataKey::TotalShares, &0_i128);
+        env.storage().instance().set(&DataKey::Paused, &false);
+    }
+
+    /// Pauses this AMM pool. Other AMM pool contract instances remain unaffected.
+    pub fn pause_pool(env: Env, admin: Address) {
+        Self::require_admin(&env, &admin);
+        env.storage().instance().set(&DataKey::Paused, &true);
+
+        let (token_a, token_b) = Self::read_pool_tokens(&env);
+        env.events()
+            .publish((symbol_short!("pause"), admin), (token_a, token_b));
+    }
+
+    /// Unpauses this AMM pool after maintenance or incident response is complete.
+    pub fn unpause_pool(env: Env, admin: Address) {
+        Self::require_admin(&env, &admin);
+        env.storage().instance().set(&DataKey::Paused, &false);
+
+        let (token_a, token_b) = Self::read_pool_tokens(&env);
+        env.events()
+            .publish((symbol_short!("unpause"), admin), (token_a, token_b));
     }
 
     /// Deposits liquidity into the pool. Returns the number of LP shares minted.
     pub fn deposit(env: Env, from: Address, amount_a: i128, amount_b: i128) -> i128 {
         from.require_auth();
+        Self::check_not_paused(&env);
 
         let token_a: Address = env
             .storage()
@@ -135,8 +162,8 @@ impl AMM {
 
         // Topic: event name only; from + amounts in data.
         env.events().publish(
-            (symbol_short!("amm"), symbol_short!("deposit")),
-            (from.clone(), amount_a, amount_b, shares),
+            (symbol_short!("deposit"),),
+            (from, amount_a, amount_b, shares),
         );
         shares
     }
@@ -150,6 +177,7 @@ impl AMM {
         min_amount_out: i128,
     ) -> i128 {
         from.require_auth();
+        Self::check_not_paused(&env);
 
         let token_a: Address = env
             .storage()
@@ -223,16 +251,15 @@ impl AMM {
         );
 
         // Topic: event name only; from + amounts in data.
-        env.events().publish(
-            (symbol_short!("amm"), symbol_short!("swap")),
-            (from.clone(), amount_in, amount_out),
-        );
+        env.events()
+            .publish((symbol_short!("swap"),), (from, amount_in, amount_out));
         amount_out
     }
 
     /// Withdraws liquidity from the pool.
     pub fn withdraw(env: Env, from: Address, shares: i128) -> (i128, i128) {
         from.require_auth();
+        Self::check_not_paused(&env);
 
         let token_a: Address = env
             .storage()
@@ -296,8 +323,8 @@ impl AMM {
 
         // Topic: event name only; from + amounts in data.
         env.events().publish(
-            (symbol_short!("amm"), symbol_short!("withdraw")),
-            (from.clone(), amount_a, amount_b, shares),
+            (symbol_short!("withdraw"),),
+            (from, amount_a, amount_b, shares),
         );
         (amount_a, amount_b)
     }
@@ -327,6 +354,54 @@ impl AMM {
             .instance()
             .get(&DataKey::TotalShares)
             .unwrap_or(0)
+    }
+
+    /// Returns the administrator authorized to pause and unpause this pool.
+    pub fn get_admin(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("not initialized")
+    }
+
+    /// Returns whether this specific AMM pool is paused.
+    pub fn is_paused(env: Env) -> bool {
+        Self::read_paused(&env)
+    }
+
+    fn require_admin(env: &Env, admin: &Address) {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("not initialized");
+        assert!(admin == &stored_admin, "unauthorized");
+    }
+
+    fn check_not_paused(env: &Env) {
+        assert!(!Self::read_paused(env), "pool is paused");
+    }
+
+    fn read_paused(env: &Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
+    fn read_pool_tokens(env: &Env) -> (Address, Address) {
+        let token_a: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenA)
+            .expect("not initialized");
+        let token_b: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::TokenB)
+            .expect("not initialized");
+        (token_a, token_b)
     }
 }
 
@@ -361,19 +436,106 @@ mod tests {
     use super::*;
     use soroban_sdk::testutils::Address as _;
 
-    #[test]
-    fn test_initialization() {
+    fn setup() -> (Env, AMMClient<'static>, Address, Address, Address) {
         let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
         let token_a = Address::generate(&env);
         let token_b = Address::generate(&env);
 
         let contract_id = env.register(AMM, ());
         let client = AMMClient::new(&env, &contract_id);
 
-        client.initialize(&token_a, &token_b);
+        client.initialize(&admin, &token_a, &token_b);
+        (env, client, admin, token_a, token_b)
+    }
+
+    #[test]
+    fn test_initialization() {
+        let (_env, client, admin, _token_a, _token_b) = setup();
+
         let (r_a, r_b) = client.get_reserves();
         assert_eq!(r_a, 0);
         assert_eq!(r_b, 0);
+        assert_eq!(client.get_admin(), admin);
+        assert!(!client.is_paused());
+    }
+
+    #[test]
+    fn test_admin_can_pause_and_unpause_pool() {
+        let (_env, client, admin, _token_a, _token_b) = setup();
+
+        client.pause_pool(&admin);
+        assert!(client.is_paused());
+
+        client.unpause_pool(&admin);
+        assert!(!client.is_paused());
+    }
+
+    #[test]
+    #[should_panic(expected = "unauthorized")]
+    fn test_non_admin_cannot_pause_pool() {
+        let (env, client, _admin, _token_a, _token_b) = setup();
+        let non_admin = Address::generate(&env);
+
+        client.pause_pool(&non_admin);
+    }
+
+    #[test]
+    fn test_pausing_one_pool_does_not_pause_other_pool() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin_a = Address::generate(&env);
+        let admin_b = Address::generate(&env);
+        let token_a = Address::generate(&env);
+        let token_b = Address::generate(&env);
+        let token_c = Address::generate(&env);
+        let token_d = Address::generate(&env);
+
+        let pool_a_id = env.register(AMM, ());
+        let pool_b_id = env.register(AMM, ());
+        let pool_a = AMMClient::new(&env, &pool_a_id);
+        let pool_b = AMMClient::new(&env, &pool_b_id);
+
+        pool_a.initialize(&admin_a, &token_a, &token_b);
+        pool_b.initialize(&admin_b, &token_c, &token_d);
+
+        pool_a.pause_pool(&admin_a);
+
+        assert!(pool_a.is_paused());
+        assert!(!pool_b.is_paused());
+    }
+
+    #[test]
+    #[should_panic(expected = "pool is paused")]
+    fn test_deposit_rejects_when_pool_is_paused() {
+        let (env, client, admin, _token_a, _token_b) = setup();
+        let user = Address::generate(&env);
+
+        client.pause_pool(&admin);
+        client.deposit(&user, &100, &100);
+    }
+
+    #[test]
+    #[should_panic(expected = "pool is paused")]
+    fn test_swap_rejects_when_pool_is_paused() {
+        let (env, client, admin, token_a, _token_b) = setup();
+        let user = Address::generate(&env);
+
+        client.pause_pool(&admin);
+        client.swap(&user, &token_a, &100, &1);
+    }
+
+    #[test]
+    #[should_panic(expected = "pool is paused")]
+    fn test_withdraw_rejects_when_pool_is_paused() {
+        let (env, client, admin, _token_a, _token_b) = setup();
+        let user = Address::generate(&env);
+
+        client.pause_pool(&admin);
+        client.withdraw(&user, &1);
     }
 }
 
@@ -434,7 +596,6 @@ mod fuzz_tests {
             }
 
             let k_before = r_a * r_b;
-            let _amount_out = swap_formula(r_a, r_b, amount_in);
             let (new_r_a, new_r_b, _) = apply_swap(r_a, r_b, amount_in, true);
             let k_after = new_r_a * new_r_b;
 
@@ -495,17 +656,15 @@ mod fuzz_tests {
     #[test]
     fn test_invariant_multiple_swaps_maintain_positive_reserves() {
         for _ in 0..100 {
-            let mut r_a: i128 = rand_simple(50000, 500000);
-            let mut r_b: i128 = rand_simple(50000, 500000);
+            let r_a: i128 = rand_simple(50000, 500000);
+            let r_b: i128 = rand_simple(50000, 500000);
             let swaps = rand_simple(1, 50) as u32;
 
             for i in 0..swaps {
                 let amount_in: i128 = rand_simple(1, 1000);
                 if amount_in < r_a && amount_in < r_b {
                     let from_a = (i % 2) == 0;
-                    let (new_r_a, new_r_b, amount_out) = apply_swap(r_a, r_b, amount_in, from_a);
-                    r_a = new_r_a;
-                    r_b = new_r_b;
+                    let (_, _, amount_out) = apply_swap(r_a, r_b, amount_in, from_a);
                     if amount_out == 0 {
                         break;
                     }
