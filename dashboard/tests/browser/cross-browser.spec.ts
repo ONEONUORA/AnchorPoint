@@ -19,13 +19,14 @@ test.describe('dashboard cross-browser smoke coverage', () => {
 
     await page.getByRole('button', { name: 'Deposit' }).click();
     await expect(page.getByTestId('active-view')).toContainText('Deposit Assets');
-    await page.getByRole('button', { name: 'USDC' }).click();
+    await page.getByRole('button', { name: 'Select USDC for deposit' }).click();
 
-    await page.getByRole('button', { name: 'Launch KYC Portal' }).click();
+    await page.getByRole('button', { name: 'Launch AnchorPoint KYC portal' }).click();
+    await page.getByRole('button', { name: 'Submit KYC and continue' }).click();
     await expect(page.getByTestId('active-view')).toContainText('Transaction Initiated');
 
     await page.getByRole('button', { name: 'KYC Status' }).click();
-    await expect(page.getByTestId('active-view')).toContainText('Configured KYC Fields');
+    await expect(page.getByTestId('active-view')).toContainText('Verification Failed');
 
     await page.getByRole('button', { name: 'Overview' }).click();
     await expect(page.getByTestId('active-view')).toContainText('Total Volume');

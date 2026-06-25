@@ -113,32 +113,32 @@ export const SEP24Flow = ({ type, uiConfig }: { type: 'deposit' | 'withdraw'; ui
               <p className="text-slate-400">
                 The anchor is supplying the field requirements for this flow from the backend configuration.
               </p>
-              <div
+              <ul
                 className="grid grid-cols-1 gap-3"
                 role="list"
                 aria-label={`Available assets for ${flowLabel.toLowerCase()}`}
               >
                 {(['USDC', 'EURT', 'ARST'] as const).map((asset) => (
-                  <button
-                    key={asset}
-                    role="listitem"
-                    onClick={() => goToStep(isWithdraw ? 2 : 3)}
-                    aria-label={`Select ${asset} for ${flowLabel.toLowerCase()}`}
-                    className="action-button flex items-center justify-between rounded-xl border border-slate-700 bg-slate-900 p-4 hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div
-                        className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20 font-bold text-primary"
-                        aria-hidden="true"
-                      >
-                        {asset[0]}
+                  <li key={asset}>
+                    <button
+                      onClick={() => goToStep(isWithdraw ? 2 : 3)}
+                      aria-label={`Select ${asset} for ${flowLabel.toLowerCase()}`}
+                      className="action-button flex w-full items-center justify-between rounded-xl border border-slate-700 bg-slate-900 p-4 hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20 font-bold text-primary"
+                          aria-hidden="true"
+                        >
+                          {asset[0]}
+                        </div>
+                        <span>{asset}</span>
                       </div>
-                      <span>{asset}</span>
-                    </div>
-                    <ArrowUpRight size={18} className="text-slate-500" aria-hidden="true" />
-                  </button>
+                      <ArrowUpRight size={18} className="text-slate-500" aria-hidden="true" />
+                    </button>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </div>
 
             <RequirementList
