@@ -1,6 +1,5 @@
 import { Request, Response } from 'express';
 import { getInfo } from './info.controller';
-import { ASSETS } from '../../config/assets';
 
 jest.mock('../../config/assets', () => {
   const mockAssets = [

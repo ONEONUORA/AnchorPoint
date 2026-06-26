@@ -2,12 +2,12 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 import { StellarService } from './stellar.service';
 import { config } from '../config/env';
 
-// Mock Stellar SDK
-var mockHorizonServer = {
+const mockHorizonServer = {
   submitTransaction: jest.fn(),
   loadAccount: jest.fn(),
 };
 
+// Mock Stellar SDK
 jest.mock('@stellar/stellar-sdk', () => {
   const original = jest.requireActual('@stellar/stellar-sdk');
   return {

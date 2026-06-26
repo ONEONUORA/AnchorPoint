@@ -3,6 +3,8 @@ import { AuthRequest } from '../middleware/auth.middleware';
 import multisigService from '../../services/multisig.service';
 import logger from '../../utils/logger';
 
+type MultisigStatusFilter = string | undefined;
+
 export class MultisigController {
   /**
    * Create a new multisig transaction
@@ -111,7 +113,7 @@ export class MultisigController {
 
       const transactions = await multisigService.getTransactionsForSigner(
         publicKey,
-        status as any
+        status as MultisigStatusFilter
       );
 
       res.json({
