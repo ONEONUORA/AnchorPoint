@@ -51,7 +51,6 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
     }
   }, [isOpen]);
 
-  // Poll for new notifications every 30 seconds
   useEffect(() => {
     const interval = setInterval(() => {
       fetchNotifications();
@@ -174,7 +173,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
                     >
                       <div className="flex items-start gap-3">
                         <div className="mt-1">{getStatusIcon(notification.status)}</div>
-                        <div className="flex-1 min-w-0">
+                        <div className="min-w-0 flex-1">
                           <p className="text-sm text-slate-200">{notification.message}</p>
                           <div className="mt-1 flex items-center gap-2 text-xs text-slate-500">
                             <span className="capitalize">{notification.type.toLowerCase()}</span>
