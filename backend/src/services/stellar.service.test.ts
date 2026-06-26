@@ -3,14 +3,17 @@ import { StellarService } from './stellar.service';
 import { config } from '../config/env';
 
 // Mock Stellar SDK
+var mockHorizonServer = {
+  submitTransaction: jest.fn(),
+  loadAccount: jest.fn(),
+};
+
 jest.mock('@stellar/stellar-sdk', () => {
   const original = jest.requireActual('@stellar/stellar-sdk');
   return {
     ...original,
     Horizon: {
-      Server: jest.fn().mockImplementation(() => ({
-        submitTransaction: jest.fn(),
-      })),
+      Server: jest.fn().mockImplementation(() => mockHorizonServer),
     },
     TransactionBuilder: {
       ...original.TransactionBuilder,
@@ -27,12 +30,10 @@ jest.mock('@stellar/stellar-sdk', () => {
 
 describe('StellarService', () => {
   let stellarService: StellarService;
-  let mockServer: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
     stellarService = new (StellarService as any)();
-    mockServer = (stellarService as any).server;
   });
 
   it('should use public network passphrase when configured', () => {
@@ -46,14 +47,15 @@ describe('StellarService', () => {
     const mockTx = {
       source: 'G_SOURCE',
       operations: [{ type: 'payment' }],
+      hash: jest.fn().mockReturnValue(Buffer.from('tx-hash')),
     };
     (StellarSdk.TransactionBuilder.fromXDR as jest.Mock).mockReturnValue(mockTx);
-    mockServer.submitTransaction.mockResolvedValue({ hash: '123', ledger: 456 });
+    mockHorizonServer.submitTransaction.mockResolvedValue({ hash: '123', ledger: 456 });
 
     const result = await stellarService.submitTransaction('mock-xdr');
 
     expect(result.hash).toBe('123');
-    expect(mockServer.submitTransaction).toHaveBeenCalled();
+    expect(mockHorizonServer.submitTransaction).toHaveBeenCalled();
   });
 
   it('should throw error for non-whitelisted operation', async () => {
@@ -79,6 +81,7 @@ describe('StellarService', () => {
     const mockTx = {
       source: 'G_SOURCE',
       operations: [{ type: 'payment' }],
+      hash: jest.fn().mockReturnValue(Buffer.from('tx-hash')),
     };
     (StellarSdk.TransactionBuilder.fromXDR as jest.Mock).mockReturnValue(mockTx);
     
@@ -92,7 +95,7 @@ describe('StellarService', () => {
         }
       }
     };
-    mockServer.submitTransaction.mockRejectedValue(stellarError);
+    mockHorizonServer.submitTransaction.mockRejectedValue(stellarError);
 
     await expect(stellarService.submitTransaction('mock-xdr'))
       .rejects.toThrow(/Stellar Error: {"operations":\["op_underfunded"\]}/);
@@ -103,15 +106,15 @@ describe('StellarService', () => {
     // Re-initialize with secret
     (config as any).STELLAR_FEE_BUMP_SECRET = 'S_MOCK_SECRET';
     stellarService = new (StellarService as any)();
-    mockServer = (stellarService as any).server;
 
     const mockTx = {
       source: 'G_SOURCE',
       operations: [{ type: 'payment' }],
+      hash: jest.fn().mockReturnValue(Buffer.from('tx-hash')),
     };
     (StellarSdk.TransactionBuilder.fromXDR as jest.Mock).mockReturnValue(mockTx);
     (StellarSdk.TransactionBuilder.buildFeeBumpTransaction as jest.Mock).mockReturnValue({ hash: 'bumped' });
-    mockServer.submitTransaction.mockResolvedValue({ hash: 'bumped', ledger: 789 });
+    mockHorizonServer.submitTransaction.mockResolvedValue({ hash: 'bumped', ledger: 789 });
 
     await stellarService.submitTransaction('mock-xdr');
 
@@ -147,4 +150,3 @@ describe('StellarService', () => {
       .toThrow('Invalid transaction XDR');
   });
 });
-
