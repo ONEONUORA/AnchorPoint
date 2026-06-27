@@ -261,6 +261,50 @@ export class Sep12Controller {
       res.status(500).json({ error: 'Internal Server Error' });
     }
   }
+  /**
+   * GET /sep12/customer/upload-url
+   *
+   * Returns a short-lived pre-signed URL that the client can use to upload a
+   * KYC document directly.  This endpoint is protected by `authMiddleware` at
+   * the router level, so `req.user` is always populated when this method runs.
+   *
+   * The `field` query-param identifies which KYC field the upload is for
+   * (e.g. `id_photo_front`).
+   */
+  async getUploadUrl(req: AuthRequest, res: Response) {
+    try {
+      const field = req.query.field as string | undefined;
+      if (!field) {
+        return res.status(400).json({ error: 'field query parameter is required' });
+      }
+
+      // The authenticated public key is available via req.user (enforced by authMiddleware).
+      const account = req.user!.publicKey;
+
+      // Generate a signed upload token: in production this would call a cloud
+      // storage pre-sign API.  Here we produce a structured token so the client
+      // knows where and under what name to upload.
+      const expiresAt = Date.now() + 15 * 60 * 1000; // 15-minute window
+      const uploadToken = Buffer.from(
+        JSON.stringify({ account, field, expiresAt })
+      ).toString('base64url');
+
+      const uploadUrl = `/sep12/customer/upload?token=${uploadToken}`;
+
+      logger.info('SEP-12 upload-url issued', { account, field });
+
+      return res.status(200).json({
+        upload_url: uploadUrl,
+        expires_at: new Date(expiresAt).toISOString(),
+        field,
+      });
+    } catch (error) {
+      logger.error('SEP-12 upload-url failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      return res.status(500).json({ error: 'Internal Server Error' });
+    }
+  }
 }
 
 export const sep12Controller = new Sep12Controller();
